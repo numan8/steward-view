@@ -67,7 +67,7 @@ class Order:
         else: self.match_single_products()
         
         # Step 3
-        if len(self.prods.unmatched) < 4: return None    # If len(self.products.unmatched) is 2 or 3, then at least one subset must contain only one product purchase. If this single product subset had a match, _match_single_products would have found it. The function assumes in such cases that no complementary subset has a match, either.
+        if len(self.prods.unmatched) < 4: return None    # If len(self.products.unmatched) is 2 or 3, then at least one subset must contain only one product purchase. If this single product subset had a match, match_single_products would have found it. The function assumes in such cases that no complementary subset has a match, either.
         else: self.match_product_combos()
     
     
