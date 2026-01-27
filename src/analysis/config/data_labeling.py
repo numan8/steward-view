@@ -1,5 +1,4 @@
 from typing import Literal
-from pydantic import Field
 
 VENDOR_DICT = {
     'ALLY AUTO'               : {'vendor': 'Ally Auto'          , 'category': 'Automotive'   },
