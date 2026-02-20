@@ -10,39 +10,12 @@ import streamlit as st
 
 
 # ----------------------------
-# Page config + styling
+# App config
 # ----------------------------
 st.set_page_config(
-    page_title="Steward View",
+    page_title="Steward View (PyFi) — Streamlit",
     page_icon="📊",
     layout="wide",
-    initial_sidebar_state="expanded",
-)
-
-st.markdown(
-    """
-<style>
-.block-container { padding-top: 1.2rem; padding-bottom: 2rem; }
-h1, h2, h3 { letter-spacing: -0.02em; }
-
-[data-testid="stMetric"] {
-  background: rgba(255,255,255,0.60);
-  border: 1px solid rgba(0,0,0,0.06);
-  padding: 12px 14px;
-  border-radius: 14px;
-}
-
-.sidebar-title {
-  font-weight: 700;
-  font-size: 0.95rem;
-  margin: 0.25rem 0 0.5rem 0;
-  opacity: 0.85;
-}
-
-hr { margin: 1rem 0; opacity: 0.25; }
-</style>
-""",
-    unsafe_allow_html=True,
 )
 
 ROOT = Path(__file__).resolve().parent
@@ -54,32 +27,21 @@ MATCHER_PATH = OUTPUT_DIR / "matcher.pkl"
 # ----------------------------
 # Helpers
 # ----------------------------
-def _ensure_api_key() -> str:
-    """
-    Enforce OPENAI_API_KEY exists.
-    Prefer Streamlit Secrets, then environment.
-    """
-    key = ""
+def get_api_key() -> str:
+    # Prefer Streamlit Secrets
     if "OPENAI_API_KEY" in st.secrets:
-        key = str(st.secrets["OPENAI_API_KEY"]).strip()
+        return str(st.secrets["OPENAI_API_KEY"]).strip()
+    return ""
+
+
+def set_api_key(key: str) -> None:
+    key = (key or "").strip()
+    if key:
         os.environ["OPENAI_API_KEY"] = key
-    else:
-        key = os.getenv("OPENAI_API_KEY", "").strip()
-
-    if not key:
-        st.error(
-            "OPENAI_API_KEY is required.\n\n"
-            "Add it in Streamlit → App Settings → **Secrets** as:\n"
-            'OPENAI_API_KEY = "sk-..."\n\n'
-            "Then rerun the app."
-        )
-        st.stop()
-
-    return key
 
 
 @st.cache_data(show_spinner=False)
-def load_csv(path: str) -> pd.DataFrame:
+def load_output_csv(path: str) -> pd.DataFrame:
     return pd.read_csv(path)
 
 
@@ -89,6 +51,7 @@ def load_matcher_counter(path: Path):
     try:
         with open(path, "rb") as f:
             matcher = pickle.load(f)
+        # The README says matcher.counter exists
         return getattr(matcher, "counter", None)
     except Exception:
         return None
@@ -96,308 +59,159 @@ def load_matcher_counter(path: Path):
 
 def run_pipeline():
     """
-    Runs analysis.run() and captures stdout for logs.
+    Runs analysis.run() and captures stdout so we can display it in Streamlit.
     """
-    import analysis  # package defined via pyproject.toml
+    import analysis  # package name defined in pyproject.toml
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
     buf = io.StringIO()
     start = time.time()
+
     with redirect_stdout(buf):
         analysis.run()
+
     elapsed = time.time() - start
-    return elapsed, buf.getvalue()
-
-
-def fmt_money(x) -> str:
-    try:
-        return f"${float(x):,.2f}"
-    except Exception:
-        return str(x)
-
-
-def safe_col(df: pd.DataFrame, name: str) -> bool:
-    return name in df.columns
-
-
-def to_datetime_safe(series: pd.Series) -> pd.Series:
-    return pd.to_datetime(series, errors="coerce")
+    logs = buf.getvalue()
+    return elapsed, logs
 
 
 # ----------------------------
-# Enforce key
+# UI
 # ----------------------------
-_ensure_api_key()
+st.title("📊 Steward View — Streamlit Runner")
 
-
-# ----------------------------
-# Header
-# ----------------------------
-left, right = st.columns([0.72, 0.28], vertical_alignment="center")
-with left:
-    st.markdown("## 📊 Steward View")
-    st.caption("Client-ready dashboard for the Steward View pipeline output (cleaned + tagged + labeled transactions).")
-with right:
-    st.markdown("**Environment:** Streamlit Cloud / Hosted")
-    st.caption("OpenAI key loaded ✅")
-
-st.divider()
-
-
-# ----------------------------
-# Sidebar
-# ----------------------------
 with st.sidebar:
-    st.markdown('<div class="sidebar-title">🚀 Pipeline</div>', unsafe_allow_html=True)
+    st.header("⚙️ Settings")
 
-    run_btn = st.button("▶ Run pipeline (analysis.run)", use_container_width=True)
-    show_logs = st.checkbox("Show logs after run", value=True)
+    secret_key = get_api_key()
+    api_key_input = st.text_input(
+        "OpenAI API Key (optional but needed for labeling/chat)",
+        value=secret_key,
+        type="password",
+        help="Recommended: set OPENAI_API_KEY in Streamlit Secrets instead of typing it here.",
+    )
 
-    st.caption("Expected output:")
-    st.code("data/output/labeled_data.csv", language="text")
+    set_api_key(api_key_input)
 
-    st.markdown("<hr/>", unsafe_allow_html=True)
+    st.divider()
 
-    st.markdown('<div class="sidebar-title">🧭 Explorer</div>', unsafe_allow_html=True)
-    preview_rows = st.slider("Rows to preview", 50, 2000, 250, step=50)
+    st.subheader("Pipeline")
+    run_btn = st.button("▶️ Run analysis.run()", use_container_width=True)
+
+    st.caption("Outputs expected:")
+    st.code("data/output/labeled_data.csv\n(data/output/matcher.pkl optional)", language="text")
 
 
-# ----------------------------
-# Run + Logs row
-# ----------------------------
-run_col, log_col = st.columns([0.55, 0.45])
+colA, colB = st.columns([1.2, 1])
 
-with run_col:
-    st.subheader("Run")
-    st.write("This runs the full pipeline including OpenAI labeling and writes the labeled CSV output.")
+with colA:
+    st.subheader("Run + Logs")
+
     if run_btn:
         with st.spinner("Running pipeline…"):
             try:
                 elapsed, logs = run_pipeline()
-                st.success(f"Pipeline completed in {elapsed:.1f}s")
-                st.session_state["last_logs"] = logs
+                st.success(f"Done in {elapsed:.1f}s")
+                if logs.strip():
+                    st.text_area("Console output", logs, height=260)
+                else:
+                    st.info("No console output captured.")
             except Exception as e:
                 st.error("Pipeline failed. Copy the error below and I’ll help you fix it.")
                 st.exception(e)
 
-with log_col:
-    st.subheader("Logs")
-    logs = st.session_state.get("last_logs", "")
-    if logs and show_logs:
-        st.text_area("Console output", logs, height=220)
-    else:
-        st.caption("Run the pipeline to see logs here.")
+    st.subheader("Output dataset")
 
-st.divider()
+    if CSV_PATH.exists():
+        df = load_output_csv(str(CSV_PATH))
+        st.caption(f"Loaded: `{CSV_PATH}`  •  Rows: {len(df):,}  •  Columns: {df.shape[1]:,}")
 
+        # Simple filters
+        with st.expander("🔎 Filters", expanded=False):
+            cols = st.multiselect("Show columns", df.columns.tolist(), default=df.columns.tolist()[:12])
+            search = st.text_input("Search (contains, any column)", value="")
 
-# ----------------------------
-# Load dataset
-# ----------------------------
-if not CSV_PATH.exists():
-    st.warning("No output CSV found yet. Run the pipeline from the sidebar.")
-    st.stop()
+        view = df.copy()
+        if search.strip():
+            s = search.strip().lower()
+            mask = view.astype(str).apply(lambda r: r.str.lower().str.contains(s, na=False)).any(axis=1)
+            view = view[mask]
 
-df = load_csv(str(CSV_PATH))
+        if cols:
+            view = view[cols]
 
-if safe_col(df, "date"):
-    df["date"] = to_datetime_safe(df["date"])
-
-
-# ----------------------------
-# KPI row
-# ----------------------------
-k1, k2, k3, k4 = st.columns(4)
-
-total_rows = len(df)
-accounts = df["account"].nunique() if safe_col(df, "account") else None
-total_spend = df["amount"].sum() if safe_col(df, "amount") else None
-
-date_min = df["date"].min() if safe_col(df, "date") else None
-date_max = df["date"].max() if safe_col(df, "date") else None
-
-with k1:
-    st.metric("Rows", f"{total_rows:,}")
-with k2:
-    st.metric("Accounts", f"{accounts:,}" if accounts is not None else "—")
-with k3:
-    st.metric("Total Amount", fmt_money(total_spend) if total_spend is not None else "—")
-with k4:
-    if date_min is not None and date_max is not None:
-        st.metric("Date Range", f"{date_min.date()} → {date_max.date()}")
-    else:
-        st.metric("Date Range", "—")
-
-
-# ----------------------------
-# Tabs
-# ----------------------------
-tab_overview, tab_explorer, tab_quality, tab_matcher = st.tabs(
-    ["📌 Overview", "🧭 Data Explorer", "✅ Data Quality", "🧩 Matcher"]
-)
-
-# ---- Overview ----
-with tab_overview:
-    left, right = st.columns([0.6, 0.4])
-
-    with left:
-        st.subheader("Recent Transactions")
-        show_cols = [c for c in ["date", "amount", "description", "account", "llm_category", "llm_vendor"] if c in df.columns]
-        if not show_cols:
-            show_cols = df.columns.tolist()[:8]
-
-        view_df = df.sort_values("date", ascending=False) if safe_col(df, "date") else df
-        st.dataframe(view_df[show_cols].head(25), use_container_width=True, height=360)
+        st.dataframe(view, use_container_width=True, height=420)
 
         csv_bytes = df.to_csv(index=False).encode("utf-8")
         st.download_button(
-            "⬇ Download CSV",
+            "⬇️ Download labeled_data.csv",
             data=csv_bytes,
             file_name="labeled_data.csv",
             mime="text/csv",
+            use_container_width=True,
         )
+    else:
+        st.warning("No output CSV yet. Click **Run analysis.run()** in the sidebar.")
 
-    with right:
-        st.subheader("Top Breakdowns")
+with colB:
+    st.subheader("Quick Stats")
 
-        if safe_col(df, "account"):
-            st.write("**Transactions by account**")
-            st.bar_chart(df["account"].value_counts().head(12))
+    if CSV_PATH.exists():
+        df = load_output_csv(str(CSV_PATH))
 
-        if safe_col(df, "llm_category"):
-            st.write("**Top categories**")
-            st.bar_chart(df["llm_category"].fillna("(missing)").value_counts().head(12))
+        # Basic numeric overview
+        st.write("**Column overview**")
+        st.write(df.dtypes.astype(str).value_counts())
 
-        if safe_col(df, "llm_vendor"):
-            st.write("**Top vendors**")
-            st.bar_chart(df["llm_vendor"].fillna("(missing)").value_counts().head(12))
+        st.divider()
 
+        st.write("**Missing values (top 15)**")
+        na = df.isna().sum().sort_values(ascending=False).head(15)
+        st.dataframe(na.rename("missing").reset_index().rename(columns={"index": "column"}), use_container_width=True)
 
-# ---- Explorer ----
-with tab_explorer:
-    st.subheader("Explore & Filter")
+        st.divider()
 
-    f1, f2, f3, f4 = st.columns([0.28, 0.24, 0.24, 0.24])
-
-    # Date filter
-    if safe_col(df, "date") and df["date"].notna().any():
-        min_d = df["date"].min().date()
-        max_d = df["date"].max().date()
-        with f1:
-            date_range = st.date_input("Date range", (min_d, max_d))
-        if isinstance(date_range, (tuple, list)) and len(date_range) == 2:
-            d0, d1 = date_range
-            mask_date = (df["date"].dt.date >= d0) & (df["date"].dt.date <= d1)
+        st.subheader("Amazon matcher (optional)")
+        counter = load_matcher_counter(MATCHER_PATH)
+        if counter is None:
+            st.info("No matcher counter found (matcher.pkl missing or unreadable).")
         else:
-            mask_date = pd.Series([True] * len(df))
-    else:
-        with f1:
-            st.caption("No date column.")
-        mask_date = pd.Series([True] * len(df))
+            # counter might be dict-like or Counter
+            try:
+                cdf = pd.DataFrame({"rule": list(counter.keys()), "count": list(counter.values())})
+                cdf = cdf.sort_values("count", ascending=False)
+                st.dataframe(cdf, use_container_width=True, height=260)
+            except Exception:
+                st.write(counter)
 
-    # Account filter
-    if safe_col(df, "account"):
-        with f2:
-            accounts_list = ["(all)"] + sorted(df["account"].dropna().astype(str).unique().tolist())
-            account_choice = st.selectbox("Account", accounts_list, index=0)
-        mask_acc = True if account_choice == "(all)" else (df["account"].astype(str) == account_choice)
-    else:
-        mask_acc = True
+    st.divider()
 
-    # Category filter
-    if safe_col(df, "llm_category"):
-        with f3:
-            cats = ["(all)"] + sorted(df["llm_category"].fillna("(missing)").astype(str).unique().tolist())
-            cat_choice = st.selectbox("Category", cats, index=0)
-        if cat_choice == "(all)":
-            mask_cat = True
-        elif cat_choice == "(missing)":
-            mask_cat = df["llm_category"].isna()
+    st.subheader("Optional: Ask a question (uses OpenAI)")
+    st.caption("This calls the repo’s `analysis.inspect.Chat` which needs `OPENAI_API_KEY`.")
+
+    question = st.text_input("Question about the output CSV", value="")
+    ask = st.button("💬 Ask", use_container_width=True)
+
+    if ask:
+        if not os.environ.get("OPENAI_API_KEY"):
+            st.error("OPENAI_API_KEY is not set. Add it in Streamlit Secrets or sidebar.")
+        elif not CSV_PATH.exists():
+            st.error("Run the pipeline first so the CSV exists.")
+        elif not question.strip():
+            st.error("Type a question first.")
         else:
-            mask_cat = df["llm_category"].astype(str) == cat_choice
-    else:
-        mask_cat = True
+            try:
+                from analysis.inspect import Chat
 
-    # Search
-    with f4:
-        query = st.text_input("Search description/vendor", value="").strip().lower()
-
-    filtered = df[mask_date & mask_acc & mask_cat].copy()
-
-    if query:
-        cols_to_search = [c for c in ["description", "llm_vendor"] if c in filtered.columns]
-        if cols_to_search:
-            mask_q = filtered[cols_to_search].astype(str).apply(
-                lambda r: r.str.lower().str.contains(query, na=False)
-            ).any(axis=1)
-            filtered = filtered[mask_q]
-
-    st.caption(f"Showing **{len(filtered):,}** rows after filters.")
-
-    with st.expander("Columns", expanded=False):
-        col_pick = st.multiselect(
-            "Choose columns to display",
-            options=df.columns.tolist(),
-            default=[c for c in ["date", "amount", "description", "account", "llm_category", "llm_vendor"] if c in df.columns]
-            or df.columns.tolist()[:10],
-        )
-
-    st.dataframe(
-        filtered[col_pick].head(preview_rows) if col_pick else filtered.head(preview_rows),
-        use_container_width=True,
-        height=520,
-    )
-
-
-# ---- Quality ----
-with tab_quality:
-    st.subheader("Quality checks")
-
-    q1, q2 = st.columns([0.55, 0.45])
-
-    with q1:
-        st.write("**Missing values (top 20)**")
-        na = df.isna().sum().sort_values(ascending=False).head(20)
-        na_df = na.rename("missing").reset_index().rename(columns={"index": "column"})
-        st.dataframe(na_df, use_container_width=True, height=420)
-
-    with q2:
-        st.write("**Schema (dtypes)**")
-        dtype_counts = df.dtypes.astype(str).value_counts().reset_index()
-        dtype_counts.columns = ["dtype", "count"]
-        st.dataframe(dtype_counts, use_container_width=True)
-
-        notes = []
-        if "llm_vendor" in df.columns and df["llm_vendor"].isna().mean() > 0.15:
-            notes.append("Some `llm_vendor` values are missing — may indicate rate limits or partial run.")
-        if "llm_category" in df.columns and df["llm_category"].isna().mean() > 0.15:
-            notes.append("Some `llm_category` values are missing — may indicate rate limits or partial run.")
-        if not notes:
-            notes.append("No major issues detected from basic checks.")
-
-        st.write("**Notes**")
-        for n in notes:
-            st.info(n)
-
-
-# ---- Matcher ----
-with tab_matcher:
-    st.subheader("Amazon matcher")
-
-    counter = load_matcher_counter(MATCHER_PATH)
-    if counter is None:
-        st.info("No matcher stats found (matcher.pkl missing or unreadable).")
-    else:
-        try:
-            cdf = pd.DataFrame({"rule": list(counter.keys()), "count": list(counter.values())}).sort_values(
-                "count", ascending=False
-            )
-            st.caption("Matches made by each reconciliation rule.")
-            st.dataframe(cdf, use_container_width=True, height=460)
-            st.bar_chart(cdf.set_index("rule")["count"])
-        except Exception:
-            st.write(counter)
-
-
-st.caption("© Steward View — Streamlit dashboard")
+                with st.spinner("Thinking…"):
+                    chat = Chat()  # uses the pipeline’s CSV output path internally
+                    answer = chat.msg(question.strip())
+                # Some implementations return a string, some print—handle both
+                if isinstance(answer, str) and answer.strip():
+                    st.success(answer)
+                else:
+                    st.success("Answered. If you don’t see text, the Chat method may print output instead.")
+            except Exception as e:
+                st.error("Chat failed. Paste the error and I’ll fix it.")
+                st.exception(e)
