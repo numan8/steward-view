@@ -87,6 +87,25 @@ def file_status_chip(label: str, ok: bool, detail: str = ""):
     st.caption(txt)
 
 
+def run_chat_question(question: str):
+    """
+    Calls analysis.inspect.Chat().msg(question) and captures BOTH:
+    - returned string (if any)
+    - printed stdout (if any)
+    """
+    from analysis.inspect import Chat
+
+    chat = Chat()
+    buf = io.StringIO()
+
+    with redirect_stdout(buf):
+        ret = chat.msg(question)
+
+    printed = buf.getvalue().strip()
+    returned = ret.strip() if isinstance(ret, str) else ""
+    return returned, printed
+
+
 # ----------------------------
 # Header / Top Bar
 # ----------------------------
@@ -320,7 +339,7 @@ with tab_stats:
 
 
 # ----------------------------
-# Tab: Q&A
+# Tab: Q&A (FIXED)
 # ----------------------------
 with tab_qa:
     st.subheader("Ask a question (uses OpenAI)")
@@ -328,7 +347,11 @@ with tab_qa:
 
     q1, q2 = st.columns([1.4, 1.0], vertical_alignment="center")
     with q1:
-        question = st.text_input("Question about the output CSV", value="", placeholder="e.g., What are the most common merchant categories?")
+        question = st.text_input(
+            "Question about the output CSV",
+            value="",
+            placeholder="e.g., What’s the most common merchant?",
+        )
     with q2:
         st.write("")
         ask = st.button("💬 Ask", use_container_width=True)
@@ -342,16 +365,16 @@ with tab_qa:
             st.error("Type a question first.")
         else:
             try:
-                from analysis.inspect import Chat
-
                 with st.spinner("Thinking…"):
-                    chat = Chat()  # uses the pipeline’s CSV output path internally
-                    answer = chat.msg(question.strip())
+                    returned, printed = run_chat_question(question.strip())
 
-                if isinstance(answer, str) and answer.strip():
-                    st.success(answer)
+                # Show the best available output
+                if returned:
+                    st.success(returned)
+                elif printed:
+                    st.success(printed)
                 else:
-                    st.success("Answered. If you don’t see text, the Chat method may print output instead.")
+                    st.warning("The Chat method did not return or print any text.")
             except Exception as e:
                 st.error("Chat failed. Paste the error and I’ll fix it.")
                 st.exception(e)
