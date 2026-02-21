@@ -33,10 +33,46 @@ def get_api_key_from_secrets() -> str:
     return ""
 
 
+def validate_api_key(key: str) -> tuple[bool, str]:
+    """
+    Returns (ok, message).
+    We ensure the key is safe to place into HTTP headers:
+    - non-empty
+    - no newlines/tabs
+    - ASCII-only (http header requirement in many runtimes)
+    - basic OpenAI key prefix check
+    """
+    key = (key or "").strip()
+
+    if not key:
+        return False, "Empty"
+
+    if any(ch in key for ch in ["\n", "\r", "\t"]):
+        return False, "Key contains newlines/tabs. Paste ONLY the key."
+
+    try:
+        key.encode("ascii")
+    except UnicodeEncodeError:
+        return False, "Key contains non-ASCII characters (e.g., ✅). Paste ONLY the OpenAI key."
+
+    # Basic prefix checks (won't be perfect but prevents accidental pastes)
+    if not (key.startswith("sk-") or key.startswith("sess-") or key.startswith("rk-")):
+        return False, "Key doesn't look like an OpenAI key (expected sk-... / sess-... / rk-...)."
+
+    return True, "OK"
+
+
 def set_api_key(key: str) -> None:
     key = (key or "").strip()
-    if key:
+    ok, msg = validate_api_key(key)
+
+    if ok:
         os.environ["OPENAI_API_KEY"] = key
+    else:
+        # Never set invalid keys in env (prevents UnicodeEncodeError in headers)
+        os.environ.pop("OPENAI_API_KEY", None)
+        if key:
+            st.error(f"Invalid API key: {msg}")
 
 
 @st.cache_data(show_spinner=False)
@@ -114,15 +150,30 @@ st.title("📊 Steward View — Streamlit Runner")
 with st.container(border=True):
     c1, c2, c3, c4 = st.columns([1.6, 1.2, 1.2, 1.0], vertical_alignment="center")
 
-    # API key box (top, not only sidebar)
+    # API key box (top)
     with c1:
         secret_key = get_api_key_from_secrets()
         api_key_input = st.text_input(
             "OpenAI API Key (optional)",
             value=secret_key,
             type="password",
-            help="Best practice: set OPENAI_API_KEY in Streamlit Secrets. This field is optional unless you use labeling/chat.",
+            help="Paste ONLY the key (e.g., sk-...). Best: set OPENAI_API_KEY in Streamlit Secrets.",
         )
+
+        # Add clear button (optional UX)
+        clear = st.button("Clear key", use_container_width=True)
+        if clear:
+            api_key_input = ""
+            os.environ.pop("OPENAI_API_KEY", None)
+            st.toast("Key cleared.", icon="✅")
+
+        # Validate & set key safely
+        if api_key_input:
+            ok, msg = validate_api_key(api_key_input)
+            if ok:
+                st.success("API key looks valid.")
+            else:
+                st.warning(msg)
         set_api_key(api_key_input)
 
     # Run button
@@ -304,7 +355,10 @@ with tab_stats:
         with c1:
             st.write("**Column types**")
             dtype_counts = df.dtypes.astype(str).value_counts()
-            st.dataframe(dtype_counts.rename("count").reset_index().rename(columns={"index": "dtype"}), use_container_width=True)
+            st.dataframe(
+                dtype_counts.rename("count").reset_index().rename(columns={"index": "dtype"}),
+                use_container_width=True,
+            )
 
             st.write("**Missing values (top 20)**")
             na = df.isna().sum().sort_values(ascending=False)
@@ -358,7 +412,7 @@ with tab_qa:
 
     if ask:
         if not os.environ.get("OPENAI_API_KEY"):
-            st.error("OPENAI_API_KEY is not set. Add it in Streamlit Secrets or type it at the top.")
+            st.error("OPENAI_API_KEY is not set (or invalid). Add it in Secrets or paste a valid key (sk-...).")
         elif not CSV_PATH.exists():
             st.error("Run the pipeline first so the CSV exists.")
         elif not question.strip():
